@@ -29,7 +29,7 @@ python -m http.server
     2. Run it: Unzip and run the executable (in a seperate terminal to the one you are running the python http server). By default, it will start listening for streams.
     3. Find your IP: Open your terminal/command prompt and type `ipconfig` (Windows) or `ifconfig` (Mac/Linux) to find your local IP address (e.g., 192.168.1.50).
 
-> Note: I have included MediaMTX v1.15.5 in this repository under `/mediamtx-server/` (along with my modified `mediamtx.yml` config file) for easy access. However, I would imagine that it is best practice to just download the latest official release. 
+> Note: I have included MediaMTX v1.15.5 in this repository under `/mediamtx_v1.15.5_linux_amd64/` (along with my modified `mediamtx.yml` config file) for easy access. However, I would imagine that it is best practice to just download the latest official release. 
 
 > Another note: You might need to modify the `mediamtx.yml` config file to muck around with the ports that the MediaMTX server is listening on / serving to. It told me that there was a port conflict with the one that the python server was hosting on (port 8000), so I changed the YAML file untill it stopped complaining.
 
