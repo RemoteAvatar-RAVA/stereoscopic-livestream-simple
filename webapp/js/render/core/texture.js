@@ -124,8 +124,12 @@ export class ImageTexture extends Texture {
 
 export class UrlTexture extends ImageTexture {
   constructor(url) {
-    let img = new Image();
-    super(img);
+    const img = new Image();
+    super(img); 
+
+    this._manualKey = url;
+    this.key = url;           // optional but strongly recommended for your current renderer
+
     img.src = url;
   }
 }
@@ -141,8 +145,19 @@ export class BlobTexture extends ImageTexture {
 export class VideoTexture extends Texture {
   constructor(video) {
     super();
+    
 
     this._video = video;
+
+    this._key =
+      (video && video.dataset && video.dataset.src) ||
+      (video && video.currentSrc) ||
+      (video && video.src) ||
+      "webrtc-video-texture";
+
+    this._src = this._key
+    this._url = this._key
+
 
     if (video.readyState >= 2) {
       this._promise = Promise.resolve(this);
@@ -154,6 +169,10 @@ export class VideoTexture extends Texture {
         video.addEventListener('error', reject);
       });
     }
+  }
+
+  get key() {
+    return this._key;
   }
 
   get format() {

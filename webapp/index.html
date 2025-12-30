@@ -1,23 +1,7 @@
 <!doctype html>
 <!--
 Copyright 2018 The Immersive Web Community Group
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+...
 -->
 <html>
   <head>
@@ -29,10 +13,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
     <link rel='stylesheet' href='css/common.css'>
 
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>  <!-- GEMINI SHIT -->
+    <!-- MediaMTX WebRTC helper -->
+    <script defer src="./reader.js"></script>
 
     <title>Stereo Video Player</title>
   </head>
+
   <body>
     <header>
       <details open>
@@ -44,8 +30,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           <hr/>
           Autoplay when VR starts: <input id='autoplayVideo' type='checkbox'/>
         </p>
-      </summary>
+      </details>
     </header>
+
     <script type="module">
       import {WebXRButton} from './js/util/webxr-button.js';
       import {Scene} from './js/render/scenes/scene.js';
@@ -57,8 +44,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       import {InlineViewerHelper} from './js/util/inline-viewer-helper.js';
       import {QueryArgs} from './js/util/query-args.js';
 
-      // If requested, use the polyfill to provide support for mobile devices
-      // and devices which only support WebVR.
       import WebXRPolyfill from './js/third-party/webxr-polyfill/build/webxr-polyfill.module.js';
       if (QueryArgs.getBool('usePolyfill', true)) {
         let polyfill = new WebXRPolyfill();
@@ -78,97 +63,230 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       scene.addNode(new Gltf2Node({url: 'media/gltf/home-theater/home-theater.gltf'}));
       scene.enableStats(false);
 
-      // let video = document.createElement('video');
-      // video.loop = true;
-      // video.src = 'media/video/bbb-sunflower-540p2-1min.webm';
-      // video.src = 'media/video/demo_ransome.mkv';
+      // -----------------------------------------------------------------
+      // WEBRTC SECTION
+      // -----------------------------------------------------------------
 
-      // let videoNode = new VideoNode({
-      //   video: video,
-      //   // displayMode: 'stereoTopBottom'
-      //   displayMode: 'stereoLeftRight'
-      // });
-
-      // --------------------------------------------------------------- GEMINI SHIT START
       let video = document.createElement('video');
-      video.crossOrigin = 'anonymous'; 
-      video.muted = true; // 1. Mute to allow autoplay bypass
-      video.autoplay = true; 
+      video.dataset.src = "webrtc://live/mystream";
+
+      // NOTE: crossOrigin is irrelevant for srcObject, but harmless
+      video.crossOrigin = 'anonymous';
+
+      // Autoplay friendly settings
+      video.muted = true;
+      video.autoplay = true;
       video.playsInline = true;
+      video.preload = "auto";
+      video.disablePictureInPicture = true;
+      video.setAttribute("playsinline", "");
+      video.setAttribute("muted", "");
+      video.setAttribute("autoplay", "");
 
-      const streamUrl = 'http://192.168.1.36:8888/live/mystream/index.m3u8';
-
-      if (Hls.isSupported()) {
-        var hls = new Hls();
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, function() {
-          // 2. We use a muted play here to ensure the stream starts buffering
-          video.play().catch(e => console.log("Autoplay prevented, waiting for user."));
-        });
-      } 
-      else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // 3. Only set video.src directly if the browser actually supports it (Quest/Safari)
-        video.src = streamUrl;
-      }
-
-      // 4. IMPORTANT FIX: Do NOT set video.src = streamUrl here for Firefox. 
-      // Instead, give the renderer a fake key so it doesn't crash, 
-      // without triggering the browser's native loader.
-      video.dataset.src = streamUrl; 
-
+      // Create VideoNode early, BUT don't add to scene until video has real frames.
       let videoNode = new VideoNode({
         video: video,
         displayMode: 'stereoLeftRight'
       });
-      // -------------------------------------------------------------- GEMINI SHIT END
 
-      // When the video is clicked we'll pause it if it's playing.
-      videoNode.onSelect(() => {
-        if (!video.paused) {
-          playButton.visible = true;
-          video.pause();
-        } else {
-          playButton.visible = false;
-          video.play();
-        }
-      });
-      videoNode.selectable = true;
+      console.log("VideoTexture debug:",
+        videoNode._video_texture?.key,
+        videoNode._video_texture?._key,
+        video.dataset.src,
+        video.currentSrc,
+        video.src
+      );
 
-      // Move back to the position of the in-room screen and size to cover it.
-      // Values determined experimentally and with many refreshes.
-      // videoNode.translation = [0.025, 0.275, -4.4]; # THIS IS THE OG
+
+      // Position/scale in theatre
       videoNode.translation = [0.025, 0.275, -1.5];
       videoNode.scale = [2.1, 1.1, 1.0];
-      scene.addNode(videoNode);
 
-      video.addEventListener('loadeddata', () => {
-        // Once the video has loaded up adjust the aspect ratio of the "screen"
-        // to fit the video's native shape.
+      let videoNodeAdded = false;
+
+      function addVideoNodeOnceReady() {
+        if (videoNodeAdded) return;
+        videoNodeAdded = true;
+
+        // Add to scene only after video is ready, to avoid “bind black texture once” bugs
+        scene.addNode(videoNode);
+
+        // Now that node exists in scene, attach interactions safely
+        videoNode.onSelect(() => {
+          if (!video.paused) {
+            playButton.visible = true;
+            video.pause();
+          } else {
+            playButton.visible = false;
+            video.play().catch(()=>{});
+          }
+        });
+        videoNode.selectable = true;
+
+        console.log("VideoNode added to scene");
+      }
+
+      // IMPORTANT: your HLS path was /live/mystream, so WHEP should match
+      const whepUrl = "http://192.168.32.72:8889/live/mystream/whep";
+      let reader = null;
+
+      function startWHEP() {
+        if (typeof MediaMTXWebRTCReader === "undefined") {
+          console.log("Waiting for reader.js to load...");
+          setTimeout(startWHEP, 50);
+          return;
+        }
+
+        console.log("Starting WHEP:", whepUrl);
+
+        reader = new MediaMTXWebRTCReader({
+          url: whepUrl,
+          user: "",
+          pass: "",
+          token: "",
+
+          onError: (err) => {
+            console.error("WHEP/WebRTC error:", err);
+          },
+
+          // onTrack: (evt) => {
+          //   console.log("onTrack:", evt);
+
+          //   if (evt.streams && evt.streams[0]) {
+          //     video.srcObject = evt.streams[0];
+
+          //     // Try to keep playback "live"
+          //     video.playbackRate = 1.0;
+          //     video.defaultPlaybackRate = 1.0;
+
+          //     // Play immediately for DOM preview
+          //     video.play().then(() => {
+          //       console.log("video.play() ok");
+          //     }).catch((e) => {
+          //       console.warn("video.play() blocked:", e);
+          //     });
+          //   } else {
+          //     console.warn("No streams[0] in onTrack event:", evt);
+          //   }
+          // },
+
+          onTrack: (evt) => {
+            console.log("onTrack:", evt);
+
+            if (evt.streams && evt.streams[0]) {
+              video.srcObject = evt.streams[0];
+
+              // Try to keep playback "live"
+              video.playbackRate = 1.0;
+              video.defaultPlaybackRate = 1.0;
+
+              // >>> FORCE LIVE EDGE BEHAVIOUR (added) <<<
+              // Keep currentTime close to the end of the buffered range.
+              // This prevents the browser from accumulating 2–3s of latency over time.
+              const LIVE_EDGE_MAX_LAG_S = 0.15; // allowed lag behind live edge
+              const LIVE_EDGE_TARGET_S  = 0.05; // how close to jump to edge
+
+              const liveEdgeClamp = () => {
+                try {
+                  if (!video.buffered || video.buffered.length === 0) return;
+
+                  // Use the most recent buffered range
+                  const end = video.buffered.end(video.buffered.length - 1);
+                  const lag = end - video.currentTime;
+
+                  if (lag > LIVE_EDGE_MAX_LAG_S) {
+                    video.currentTime = Math.max(0, end - LIVE_EDGE_TARGET_S);
+                  }
+                } catch (e) {
+                  // buffered.end can throw while ranges are changing
+                }
+              };
+
+              // Attach once
+              if (!video._liveEdgeClampAttached) {
+                video._liveEdgeClampAttached = true;
+                video.addEventListener("timeupdate", liveEdgeClamp);
+                video.addEventListener("progress", liveEdgeClamp);
+                video.addEventListener("playing", liveEdgeClamp);
+              }
+              // <<< end added >>>
+
+              // Play immediately
+              video.play().then(() => {
+                console.log("video.play() ok");
+              }).catch((e) => {
+                console.warn("video.play() blocked:", e);
+              });
+            } else {
+              console.warn("No streams[0] in onTrack event:", evt);
+            }
+          },
+        });
+      }
+
+      startWHEP();
+
+      // When metadata arrives, we know the stream has real dimensions.
+      // This is the moment we add the node and “rebind” it once to force texture update.
+      video.addEventListener("loadedmetadata", () => {
+        console.log("loadedmetadata", video.videoWidth, video.videoHeight);
+
+        // Add to scene only once real frames exist
+        addVideoNodeOnceReady();
+
+        console.log("After adding video node")
+
+        // Adjust aspect ratio once we know real dims
         let aspect = videoNode.aspectRatio;
         if (aspect < 2.0) {
           videoNode.scale = [aspect * 1.1, 1.1, 1.0];
         } else {
           videoNode.scale = [2.1, 2.1 / aspect, 1.0];
         }
-      });
 
-      // Add a button to the scene to play/pause the movie.
-      let playTexture = new UrlTexture('media/textures/play-button.png');
+        // FORCE a rebind: remove and re-add the node.
+        // This fixes many “black texture forever” cases with HTMLVideoElement -> WebGL texture.
+        try {
+          scene.removeNode(videoNode);
+          scene.addNode(videoNode);
+          console.log("VideoNode re-added to force texture rebind");
+        } catch (e) {
+          // removeNode may not exist in your Scene implementation; harmless
+          console.warn("Scene remove/re-add not supported:", e);
+        }
+      }, { once: true });
 
-      // Create a button that plays the video when clicked.
-      let playButton = new ButtonNode(playTexture, () => {
-        // Play the video and hide the button.
-        if (video.paused) {
-          playButton.visible = false;
-          video.play();
+      video.addEventListener("error", () => console.error("VIDEO error", video.error));
+      video.addEventListener("playing", () => console.log("playing"));
+      video.addEventListener("waiting", () => console.log("waiting (buffering)"));
+
+      window.addEventListener("beforeunload", () => {
+        if (reader) {
+          try { reader.close(); } catch (e) {}
         }
       });
-      // Move the play button to the center of the screen and make it much
-      // bigger.
-      playButton.translation = [0.025, 0.275, -4.2];
-      playButton.scale = [5.0, 5.0, 5.0];
+
+      // -----------------------------------------------------------------
+      // UI interactions for the video node
+      // -----------------------------------------------------------------
+
+      let playTexture = new UrlTexture('media/textures/play-button.png');
+
+      let playButton = new ButtonNode(playTexture, () => {
+        if (video.paused) {
+          playButton.visible = false;
+          video.play().catch(()=>{});
+        }
+      });
+
+      // Put the play button near the screen while debugging
+      playButton.translation = [0.025, 0.275, -1.4];
+      playButton.scale = [2.0, 2.0, 2.0];
       scene.addNode(playButton);
+
+      // -----------------------------------------------------------------
+      // WebXR setup
+      // -----------------------------------------------------------------
 
       function initXR() {
         xrButton = new WebXRButton({
@@ -187,12 +305,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
 
       function initGL() {
-        if (gl)
-          return;
+        if (gl) return;
 
-        gl = createWebGLContext({
-          xrCompatible: true
-        });
+        gl = createWebGLContext({ xrCompatible: true });
         document.body.appendChild(gl.canvas);
 
         function onResize() {
@@ -212,29 +327,18 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         let pending;
 
         if (autoplay) {
-          // If we want the video to autoplay when the session has fully started
-          // (which may be several seconds after the original requestSession
-          // call due to clicking through consent prompts or similar) then we
-          // need to start the video within a user activation event first
-          // (which this function is.) Once it's been started successfully we
-          // pause it, at which point we can resume it pretty much whenever we'd
-          // like.
-          pending = video.play().then(() => {
-            video.pause();
-          });
+          pending = video.play().then(() => video.pause()).catch(()=>{});
         }
 
         return navigator.xr.requestSession('immersive-vr', {
-            requiredFeatures: ['local-floor']
+          requiredFeatures: ['local-floor']
         }).then((session) => {
           xrButton.setSession(session);
           session.isImmersive = true;
           onSessionStarted(session);
 
-          if (autoplay) {
-            pending.then(() => {
-              video.play();
-            });
+          if (autoplay && pending) {
+            pending.then(() => video.play().catch(()=>{}));
           }
         });
       }
@@ -243,8 +347,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         session.addEventListener('end', onSessionEnded);
         session.addEventListener('select', (ev) => {
           let refSpace = ev.frame.session.isImmersive ?
-                           xrImmersiveRefSpace :
-                           inlineViewerHelper.referenceSpace;
+            xrImmersiveRefSpace :
+            inlineViewerHelper.referenceSpace;
           scene.handleSelect(ev.inputSource, ev.frame, refSpace);
         });
 
@@ -254,10 +358,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         let glLayer = new XRWebGLLayer(session, gl);
         session.updateRenderState({ baseLayer: glLayer });
 
-        // In this case we're going to use an 'local' frame of reference
-        // because we want to users head to appear in the right place relative
-        // to the center chair, as if they're sitting in it, rather than
-        // somewhere in the room relative to the floor.
         let refSpaceType = session.isImmersive ? 'local' : 'viewer';
         session.requestReferenceSpace(refSpaceType).then((refSpace) => {
           if (session.isImmersive) {
@@ -284,22 +384,17 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       function onXRFrame(t, frame) {
         let session = frame.session;
         let refSpace = session.isImmersive ?
-                         xrImmersiveRefSpace :
-                         inlineViewerHelper.referenceSpace;
+          xrImmersiveRefSpace :
+          inlineViewerHelper.referenceSpace;
         let pose = frame.getViewerPose(refSpace);
 
         scene.startFrame();
-
         session.requestAnimationFrame(onXRFrame);
-
         scene.updateInputSources(frame, refSpace);
-
         scene.drawXRFrame(frame, pose);
-
         scene.endFrame();
       }
 
-      // Start the XR application.
       initXR();
     </script>
   </body>
