@@ -11,7 +11,9 @@ Currently this system is a just a modified verson of the [WebXR Stereovideo Samp
 
 # Setup
 
-1. Clone the repository: 
+0. Clone this repostiory
+
+1. Clone the mediamtx repository: 
 
 ###### Linux
 ```
