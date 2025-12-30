@@ -13,8 +13,14 @@ Currently this system is a just a modified verson of the [WebXR Stereovideo Samp
 
 1. Clone the repository: 
 
+###### Linux
 ```
 git clone git@github.com:bluenviron/mediamtx.git
+```
+
+###### Windows
+```
+git clone https://github.com/bluenviron/mediamtx.git
 ```
 
 2. Start the webserver
