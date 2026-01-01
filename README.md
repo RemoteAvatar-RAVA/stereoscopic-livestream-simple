@@ -83,3 +83,69 @@ python -m http.server
 10. Everything should now work perhaps. 
 
 > At current, I haven't been able to reduce the realtime delay of the stereoscopic stream to be under 3 seconds. I am guessing more fiddling with the OBS stream settings might do the trick. Enjoy watching youself in semi-realtime 3D!
+
+
+# Using FFmpeg instead of OBS
+
+> for now this section is a bunch of rough notes as we continue testing and tweaking the ffmpeg command to suite the stereoscopic streaming application better. 
+
+Search for cameras:
+
+```
+v4l2-ctl --list-devices
+```
+
+Identify what the webcame can output:
+
+```
+v4l2-ctl --list-formats-ext --device /dev/video2
+```
+
+`ffmpeg` wiki on about [webcam capture](https://trac.ffmpeg.org/wiki/Capture/Webcam) gives us this command for linux:
+
+```
+ffmpeg -f v4l2 -framerate 25 -video_size 640x480 -i /dev/video0 output.mkv
+```
+
+First working command:
+```
+ffmpeg -re -i /dev/video0 -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k -g 50 -c:a aac -b:a 128k -ar 44100 -f flv rtmp://localhost/live/mystream
+```
+
+Better command:
+```
+ffmpeg -f v4l2 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -c:a aac -b:a 128k -ar 44100 -f flv rtmp://localhost/live/mystream
+```
+```
+ffmpeg -f v4l2 -i /dev/video2 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -c:a aac -b:a 128k -ar 44100 -f flv rtmp://localhost/live/mystream
+```
+
+Use MJPG (compression):
+
+```
+ffmpeg -f v4l2 -input_format mjpeg -video_size 3200x1200 -framerate 60 -i /dev/video2 \
+  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+  -x264-params "nal-hrd=cbr" -b:v 6000k -minrate 6000k -maxrate 6000k -bufsize 3000k \
+  -g 60 -c:a aac -b:a 128k -ar 44100 -f flv rtmp://localhost/live/mystream
+```
+
+> Above is the best command that I have that works with the stereoscopic camera. It has reduced the delay that I experienced with OBS significantly. Unfortunately - I think the rest of the delay is due to the webapp and the Quest 1 - and not to do with ffmpeg or mediamtx anymore. When veiwing with the "ffplay no buffer" command below - there was no delay. 
+
+
+
+Test in browser:
+
+```
+rtmp://localhost/live/mystream
+```
+
+Test with ffplay:
+
+```
+ffplay rtmp://localhost/live/mystream
+```
+
+ffplay no buffer:
+```
+ffplay -fflags nobuffer -flags low_delay -strict experimental rtmp://localhost/live/mystream
+```
